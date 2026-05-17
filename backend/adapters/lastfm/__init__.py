@@ -10,6 +10,7 @@ from backend.adapters.types import ExternalTrackRef, ListenEvent
 from backend.config import get_settings
 
 LASTFM_API_BASE = "https://ws.audioscrobbler.com/2.0/"
+LASTFM_RECENT_TRACKS_MAX_LIMIT = 200
 
 
 class LastFMAdapter(ListeningHistoryAdapter):
@@ -28,7 +29,7 @@ class LastFMAdapter(ListeningHistoryAdapter):
             "user": user_id,
             "api_key": api_key,
             "format": "json",
-            "limit": 50,
+            "limit": LASTFM_RECENT_TRACKS_MAX_LIMIT,
         }
         if since:
             params["from"] = int(since.timestamp())
