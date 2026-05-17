@@ -66,3 +66,7 @@ PYTHONPATH=. pytest backend/tests
 ```
 
 > In restricted environments, dependency installation may block full test execution.
+
+## Planning
+
+- Next phase execution plan: `docs/next-phase-plan.md`
