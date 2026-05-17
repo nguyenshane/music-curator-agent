@@ -56,6 +56,19 @@ class Lane(Base):
     user_id: Mapped[str] = mapped_column(String(80), index=True)
     lane_name: Mapped[str] = mapped_column(String(200))
     description: Mapped[str] = mapped_column(String(600), default="")
+
+
+class JobRun(Base):
+    __tablename__ = "job_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_type: Mapped[str] = mapped_column(String(60), default="daily", index=True)
+    status: Mapped[str] = mapped_column(String(20), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    total_jobs: Mapped[int] = mapped_column(Integer)
+    completed_jobs: Mapped[int] = mapped_column(Integer, default=0)
+    failed_jobs: Mapped[int] = mapped_column(Integer, default=0)
     contexts: Mapped[list[str]] = mapped_column(ARRAY(String), server_default="{}", default=list)
     top_artists: Mapped[list[str]] = mapped_column(ARRAY(String), server_default="{}", default=list)
     top_tags: Mapped[list[str]] = mapped_column(ARRAY(String), server_default="{}", default=list)
