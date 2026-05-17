@@ -15,6 +15,7 @@ class Settings:
     spotify_client_id: str | None
     spotify_client_secret: str | None
     lastfm_api_key: str | None
+    lastfm_user: str | None
     tidal_client_id: str | None
     tidal_client_secret: str | None
     ytmusic_oauth_token: str | None
@@ -42,6 +43,7 @@ def get_settings() -> Settings:
         spotify_client_id=os.getenv("SPOTIFY_CLIENT_ID"),
         spotify_client_secret=os.getenv("SPOTIFY_CLIENT_SECRET"),
         lastfm_api_key=os.getenv("LASTFM_API_KEY"),
+        lastfm_user=os.getenv("LASTFM_USER"),
         tidal_client_id=os.getenv("TIDAL_CLIENT_ID"),
         tidal_client_secret=os.getenv("TIDAL_CLIENT_SECRET"),
         ytmusic_oauth_token=os.getenv("YTMUSIC_OAUTH_TOKEN"),

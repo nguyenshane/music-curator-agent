@@ -27,6 +27,7 @@ SPOTIFY_SCOPES = [
     "user-read-email",
 ]
 SPOTIFY_SCOPES_STR = ",".join(SPOTIFY_SCOPES)
+SPOTIFY_RECENTLY_PLAYED_MAX_LIMIT = 50
 
 
 class SpotifyAdapter(ListeningHistoryAdapter):
@@ -214,7 +215,7 @@ class SpotifyAdapter(ListeningHistoryAdapter):
         logger.info(f"SpotifyAdapter: fetched {len(events)} top tracks for user={user_id}")
         return events
 
-    def _fetch_user_recently_played(self, user_id: str, *, limit: int = 50) -> list[ListenEvent]:
+    def _fetch_user_recently_played(self, user_id: str, *, limit: int = SPOTIFY_RECENTLY_PLAYED_MAX_LIMIT) -> list[ListenEvent]:
         """Fetch user's recently played tracks (requires OAuth2)."""
         token = self._get_user_token(user_id)
         endpoint = f"/me/player/recently-played?limit={limit}"
@@ -374,7 +375,11 @@ class SpotifyAdapter(ListeningHistoryAdapter):
             # Try user-specific data first
             if user_id in self._user_tokens:
                 try:
-                    recently_played = self._fetch_user_recently_played(user_id)
+                    # First-lane discovery should maximize recent-song coverage.
+                    recently_played = self._fetch_user_recently_played(
+                        user_id,
+                        limit=SPOTIFY_RECENTLY_PLAYED_MAX_LIMIT,
+                    )
                     all_events.extend(recently_played)
                 except Exception as e:
                     logger.warning(f"SpotifyAdapter: recently played failed for {user_id}: {e}")
