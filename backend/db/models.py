@@ -56,6 +56,13 @@ class Lane(Base):
     user_id: Mapped[str] = mapped_column(String(80), index=True)
     lane_name: Mapped[str] = mapped_column(String(200))
     description: Mapped[str] = mapped_column(String(600), default="")
+    contexts: Mapped[list[str]] = mapped_column(ARRAY(String), server_default="{}", default=list)
+    top_artists: Mapped[list[str]] = mapped_column(ARRAY(String), server_default="{}", default=list)
+    top_tags: Mapped[list[str]] = mapped_column(ARRAY(String), server_default="{}", default=list)
+    energy_profile: Mapped[dict] = mapped_column(JSON, server_default="{}", default=dict)
+    languages: Mapped[list[str]] = mapped_column(ARRAY(String), server_default="{}", default=list)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class JobRun(Base):
