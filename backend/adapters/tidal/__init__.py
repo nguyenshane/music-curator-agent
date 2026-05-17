@@ -12,7 +12,8 @@ from backend.adapters.base import ListeningHistoryAdapter
 from backend.adapters.types import ExternalTrackRef, ListenEvent
 from backend.config import get_settings
 
-TIDAL_AUTH_URL = "https://auth.tidal.com/v1/oauth2/token"
+TIDAL_TOKEN_URL = "https://auth.tidal.com/v1/oauth2/token"
+TIDAL_AUTHORIZE_URL = "https://auth.tidal.com/v1/oauth2/authorize"
 TIDAL_API_BASE = "https://api.tidal.com/v1"
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,7 @@ class TidalAdapter(ListeningHistoryAdapter):
 
         with httpx.Client() as client:
             response = client.post(
-                TIDAL_AUTH_URL,
+                TIDAL_TOKEN_URL,
                 data={
                     "grant_type": "client_credentials",
                     "client_id": client_id,
@@ -75,12 +76,12 @@ class TidalAdapter(ListeningHistoryAdapter):
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
             "state": state,
-            "scope": "r_usr u_usr即便 u_sub",
+            "scope": "r_usr w_usr",
         }
         if redirect_uri:
             params["redirect_uri"] = redirect_uri
 
-        auth_url = f"{TIDAL_API_BASE}/oauth2/authorize?{urlencode(params)}"
+        auth_url = f"{TIDAL_AUTHORIZE_URL}?{urlencode(params)}"
         self._user_tokens[user_id] = {
             "code_verifier": code_verifier,
             "state": state,
@@ -96,13 +97,15 @@ class TidalAdapter(ListeningHistoryAdapter):
         challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
         return challenge
 
-    def exchange_code_for_tokens(self, user_id: str, auth_code: str, redirect_uri: str | None = None) -> dict[str, str]:
+    def exchange_code_for_tokens(self, user_id: str, auth_code: str, *, state: str | None = None, redirect_uri: str | None = None) -> dict[str, str]:
         """Exchange authorization code for user tokens."""
-        state = self._user_tokens.get(user_id, {}).get("state")
+        expected_state = self._user_tokens.get(user_id, {}).get("state")
         code_verifier = self._user_tokens.get(user_id, {}).get("code_verifier")
 
         if not code_verifier:
             raise RuntimeError("No PKCE state found. Call get_authorization_url first.")
+        if expected_state and state and state != expected_state:
+            raise RuntimeError("OAuth state mismatch for Tidal callback")
 
         token_data = {
             "grant_type": "authorization_code",
@@ -114,7 +117,7 @@ class TidalAdapter(ListeningHistoryAdapter):
 
         with httpx.Client() as client:
             response = client.post(
-                TIDAL_AUTH_URL,
+                TIDAL_TOKEN_URL,
                 data=token_data,
                 timeout=10.0,
             )
@@ -151,7 +154,7 @@ class TidalAdapter(ListeningHistoryAdapter):
 
         with httpx.Client() as client:
             response = client.post(
-                TIDAL_AUTH_URL,
+                TIDAL_TOKEN_URL,
                 data={
                     "grant_type": "refresh_token",
                     "refresh_token": refresh_token,

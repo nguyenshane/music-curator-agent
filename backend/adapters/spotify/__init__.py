@@ -26,7 +26,7 @@ SPOTIFY_SCOPES = [
     "playlist-read-collaborative",
     "user-read-email",
 ]
-SPOTIFY_SCOPES_STR = ",".join(SPOTIFY_SCOPES)
+SPOTIFY_SCOPES_STR = " ".join(SPOTIFY_SCOPES)
 SPOTIFY_RECENTLY_PLAYED_MAX_LIMIT = 50
 
 
@@ -39,7 +39,7 @@ class SpotifyAdapter(ListeningHistoryAdapter):
         self._client_token_expires_at: datetime | None = None
         # Per-user OAuth state
         self._user_tokens: dict[str, dict[str, Any]] = {}  # user_id -> {access_token, refresh_token, expires_at}
-        self._auth_codes: dict[str, str] = {}  # code_verifier -> auth_code (for PKCE)
+        self._oauth_state: dict[str, dict[str, str | None]] = {}  # user_id -> {state, code_verifier, redirect_uri}
 
     # ── Client Credentials (public data) ──────────────────────────────
 
@@ -93,10 +93,11 @@ class SpotifyAdapter(ListeningHistoryAdapter):
             "redirect_uri": redirect_uri,
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
-            "state": user_id,  # used to identify the user
+            "state": user_id,  # caller-supplied user context
             "prompt": "consent",  # force consent screen to get refresh token
         }
 
+        self._oauth_state[user_id] = {"state": user_id, "code_verifier": code_verifier, "redirect_uri": redirect_uri}
         return f"{SPOTIFY_AUTH_URL}?{urlencode(params)}"
 
     @staticmethod
@@ -111,6 +112,7 @@ class SpotifyAdapter(ListeningHistoryAdapter):
 
     def exchange_code_for_tokens(
         self,
+        user_id: str,
         auth_code: str,
         *,
         redirect_uri: str | None = None,
@@ -132,23 +134,22 @@ class SpotifyAdapter(ListeningHistoryAdapter):
                 data={
                     "grant_type": "authorization_code",
                     "code": auth_code,
-                    "redirect_uri": redirect_uri,
-                    "code_verifier": self._auth_codes.get(auth_code, ""),
+                    "redirect_uri": redirect_uri or self._oauth_state.get(user_id, {}).get("redirect_uri"),
+                    "code_verifier": self._oauth_state.get(user_id, {}).get("code_verifier", ""),
                 },
                 timeout=10.0,
             )
             response.raise_for_status()
             data: dict[str, Any] = response.json()
 
-        # Store tokens keyed by state (user_id)
-        state = data.get("state", "default")
-        self._user_tokens[state] = {
+        # Store tokens keyed by user_id (state is not returned by token endpoint).
+        self._user_tokens[user_id] = {
             "access_token": data["access_token"],
             "refresh_token": data.get("refresh_token", ""),
             "expires_at": datetime.now(timezone.utc).replace(tzinfo=timezone.utc)
                          + timedelta(seconds=data.get("expires_in", 3600)),
         }
-        return self._user_tokens[state]
+        return self._user_tokens[user_id]
 
     def _get_user_token(self, user_id: str) -> str:
         """Get valid access token for user. Auto-refreshes if expired."""
