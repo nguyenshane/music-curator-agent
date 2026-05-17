@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, ARRAY, JSON
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -56,3 +56,9 @@ class Lane(Base):
     user_id: Mapped[str] = mapped_column(String(80), index=True)
     lane_name: Mapped[str] = mapped_column(String(200))
     description: Mapped[str] = mapped_column(String(600), default="")
+    contexts: Mapped[list[str]] = mapped_column(ARRAY(String), server_default="{}", default=list)
+    top_artists: Mapped[list[str]] = mapped_column(ARRAY(String), server_default="{}", default=list)
+    top_tags: Mapped[list[str]] = mapped_column(ARRAY(String), server_default="{}", default=list)
+    energy_profile: Mapped[dict] = mapped_column(JSON, server_default="{}", default=dict)
+    languages: Mapped[list[str]] = mapped_column(ARRAY(String), server_default="{}", default=list)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
