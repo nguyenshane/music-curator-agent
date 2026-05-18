@@ -9,6 +9,7 @@ def test_provider_enablement_flags():
         spotify_client_id="sid",
         spotify_client_secret="ssecret",
         lastfm_api_key=None,
+        lastfm_user=None,
         tidal_client_id=None,
         tidal_client_secret=None,
         ytmusic_oauth_token="",
