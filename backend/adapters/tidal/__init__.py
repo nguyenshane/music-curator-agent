@@ -9,12 +9,27 @@ from urllib.parse import urlencode
 import httpx
 
 from backend.adapters.base import ListeningHistoryAdapter
-from backend.adapters.types import ExternalTrackRef, ListenEvent
+from backend.adapters.types import ListenEvent
 from backend.config import get_settings
 
+# TIDAL Developer Platform OAuth2 + API surface.
+# Apps are registered at https://developer.tidal.com.
+TIDAL_AUTHORIZE_URL = "https://login.tidal.com/authorize"
 TIDAL_TOKEN_URL = "https://auth.tidal.com/v1/oauth2/token"
-TIDAL_AUTHORIZE_URL = "https://auth.tidal.com/v1/oauth2/authorize"
-TIDAL_API_BASE = "https://api.tidal.com/v1"
+TIDAL_API_BASE = "https://openapi.tidal.com/v2"
+
+# Scopes for the Developer Platform. Note: the legacy `r_usr`/`w_usr` scopes
+# are NOT valid here. The Developer API also does NOT expose listening
+# history — TIDAL is wired as a playlist sync target only.
+TIDAL_SCOPES = [
+    "user.read",
+    "playlists.read",
+    "playlists.write",
+    "collection.read",
+]
+TIDAL_SCOPES_STR = " ".join(TIDAL_SCOPES)
+
+DEFAULT_REDIRECT_URI = "https://nguyenshane.com/tidal/"
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +41,7 @@ class TidalAdapter(ListeningHistoryAdapter):
         self._settings = get_settings()
         self._access_token: str | None = None
         self._token_expires_at: datetime | None = None
-        # Per-user OAuth state
+        # Per-user OAuth state and tokens.
         self._user_tokens: dict[str, dict[str, Any]] = {}
 
     # ── Client Credentials (public metadata) ──────────────────────────
@@ -61,33 +76,36 @@ class TidalAdapter(ListeningHistoryAdapter):
     # ── OAuth2 Authorization Code Flow (with PKCE) ────────────────────
 
     def get_authorization_url(self, user_id: str, *, redirect_uri: str | None = None) -> str:
-        """Generate Tidal OAuth2 authorization URL with PKCE."""
+        """Generate Tidal OAuth2 authorization URL with PKCE.
+
+        `redirect_uri` must exactly match a callback registered on the
+        developer.tidal.com app for this client_id.
+        """
         client_id = self._settings.tidal_client_id
         if not client_id:
             raise RuntimeError("TIDAL_CLIENT_ID is required for OAuth2")
-        if not redirect_uri:
-            raise RuntimeError("redirect_uri is required for Tidal OAuth2 authorization")
+
+        effective_redirect_uri = redirect_uri or DEFAULT_REDIRECT_URI
 
         code_verifier = secrets.token_urlsafe(64)
         code_challenge = self._pkce_challenge(code_verifier)
-
         state = secrets.token_urlsafe(32)
 
         params = {
             "response_type": "code",
             "client_id": client_id,
-            "redirect_uri": redirect_uri,
+            "redirect_uri": effective_redirect_uri,
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
             "state": state,
-            "scope": "r_usr w_usr",
+            "scope": TIDAL_SCOPES_STR,
         }
 
         auth_url = f"{TIDAL_AUTHORIZE_URL}?{urlencode(params)}"
         self._user_tokens[user_id] = {
             "code_verifier": code_verifier,
             "state": state,
-            "redirect_uri": redirect_uri,
+            "redirect_uri": effective_redirect_uri,
         }
         return auth_url
 
@@ -99,7 +117,14 @@ class TidalAdapter(ListeningHistoryAdapter):
         challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
         return challenge
 
-    def exchange_code_for_tokens(self, user_id: str, auth_code: str, *, state: str | None = None, redirect_uri: str | None = None) -> dict[str, str]:
+    def exchange_code_for_tokens(
+        self,
+        user_id: str,
+        auth_code: str,
+        *,
+        state: str | None = None,
+        redirect_uri: str | None = None,
+    ) -> dict[str, str]:
         """Exchange authorization code for user tokens."""
         client_id = self._settings.tidal_client_id
         client_secret = self._settings.tidal_client_secret
@@ -149,12 +174,10 @@ class TidalAdapter(ListeningHistoryAdapter):
         """Get or refresh user access token."""
         tokens = self._user_tokens.get(user_id, {})
 
-        # Try to use existing token
         if tokens.get("access_token") and tokens.get("expires_at"):
             if datetime.now(timezone.utc) < tokens["expires_at"] - timedelta(seconds=60):
                 return tokens["access_token"]
 
-        # Try to refresh
         if tokens.get("refresh_token"):
             return self._refresh_user_token(user_id)
 
@@ -192,165 +215,17 @@ class TidalAdapter(ListeningHistoryAdapter):
 
             return data["access_token"]
 
-    # ── Listening History ──────────────────────────────────────────────
-
-    TIDAL_PAGE_SIZE = 50
-    TIDAL_MAX_PAGES = 20  # safety cap: up to 1000 recent plays per fetch
-
-    def _get_session_info(self, client: httpx.Client, access_token: str) -> dict[str, Any]:
-        """Resolve the numeric userId and countryCode for the current access token.
-
-        TIDAL's API requires the actual userId (not "me") in resource paths and
-        a countryCode query parameter on most user endpoints. `/v1/sessions`
-        echoes both for the bearer token's user.
-        """
-        response = client.get(
-            f"{TIDAL_API_BASE}/sessions",
-            headers={"Authorization": f"Bearer {access_token}"},
-            timeout=10.0,
-        )
-        response.raise_for_status()
-        return response.json()
-
-    @staticmethod
-    def _parse_played_at(value: Any) -> datetime | None:
-        if value is None:
-            return None
-        if isinstance(value, (int, float)):
-            return datetime.fromtimestamp(value / 1000, tz=timezone.utc)
-        try:
-            return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        except ValueError:
-            return None
-
-    def _normalize_listen(self, item: dict[str, Any], user_id: str) -> ListenEvent | None:
-        # TIDAL collection items wrap the resource under "item"; some legacy
-        # payloads inline the track directly. Support both.
-        track_data = item.get("item") or item.get("track") or item
-        if not isinstance(track_data, dict):
-            return None
-
-        played_at = self._parse_played_at(
-            item.get("playedAt") or item.get("timestamp") or item.get("created")
-        )
-        if played_at is None:
-            return None
-
-        artists = track_data.get("artists") or []
-        artist_name = ""
-        if artists:
-            first = artists[0]
-            artist_name = first.get("name", "") if isinstance(first, dict) else str(first)
-
-        track_id = track_data.get("id")
-        if track_id is None:
-            return None
-
-        return ListenEvent(
-            provider=self.provider_name,
-            user_id=user_id,
-            played_at=played_at,
-            track=ExternalTrackRef(
-                provider=self.provider_name,
-                track_id=str(track_id),
-                title=track_data.get("title") or track_data.get("name") or "Unknown",
-                artist=artist_name,
-                isrc=track_data.get("isrc", "") or "",
-            ),
-        )
+    # ── Listening History (intentionally not supported) ──────────────────
 
     def fetch_listens(self, *, user_id: str, since: datetime | None = None) -> list[ListenEvent]:
-        """Fetch recent plays from Tidal.
+        """TIDAL Developer Platform does not expose playback history.
 
-        Requires OAuth2 user tokens. Returns empty list if not authenticated.
-        Paginates via limit/offset and stops once entries fall before `since`
-        (TIDAL's recently-played endpoint does not support server-side time
-        filtering, so we filter client-side and short-circuit).
+        TIDAL is wired as a playlist sync target only. Use Spotify or Last.fm
+        for listening-history ingestion. Returns an empty list so the daily
+        DAG can run without error.
         """
-        if user_id not in self._user_tokens or not self._user_tokens[user_id].get("access_token"):
-            logger.info("TidalAdapter: no user tokens for %s, skipping", user_id)
-            return []
-
-        try:
-            access_token = self._get_user_token(user_id)
-        except RuntimeError as e:
-            logger.warning("TidalAdapter: %s", e)
-            return []
-
-        events: list[ListenEvent] = []
-        with httpx.Client() as client:
-            # Resolve numeric userId + countryCode for the token (cached on the
-            # user record so subsequent fetches skip this round trip).
-            cached = self._user_tokens[user_id]
-            tidal_user_id = cached.get("tidal_user_id")
-            country_code = cached.get("country_code")
-            if not tidal_user_id or not country_code:
-                try:
-                    session = self._get_session_info(client, access_token)
-                except httpx.HTTPStatusError as e:
-                    logger.warning("TidalAdapter: /sessions failed: %s", e)
-                    return []
-                tidal_user_id = session.get("userId")
-                country_code = session.get("countryCode")
-                if not tidal_user_id or not country_code:
-                    logger.warning("TidalAdapter: /sessions returned no userId/countryCode")
-                    return []
-                cached["tidal_user_id"] = tidal_user_id
-                cached["country_code"] = country_code
-
-            headers = {
-                "Authorization": f"Bearer {access_token}",
-                "Accept": "application/json",
-            }
-
-            offset = 0
-            stop = False
-            for _ in range(self.TIDAL_MAX_PAGES):
-                params: dict[str, Any] = {
-                    "countryCode": country_code,
-                    "limit": self.TIDAL_PAGE_SIZE,
-                    "offset": offset,
-                }
-                response = client.get(
-                    f"{TIDAL_API_BASE}/users/{tidal_user_id}/recentlyPlayed",
-                    headers=headers,
-                    params=params,
-                    timeout=10.0,
-                )
-
-                if response.status_code == 401:
-                    logger.warning("TidalAdapter: 401 unauthorized; token may be invalid")
-                    return events
-                if response.status_code == 404:
-                    logger.warning(
-                        "TidalAdapter: recentlyPlayed endpoint not available for this account"
-                    )
-                    return events
-                response.raise_for_status()
-                payload: dict[str, Any] = response.json()
-
-                # Modern collection shape: {items, limit, offset, totalNumberOfItems}.
-                # Legacy shape: {data: [...]}. Support both.
-                items = payload.get("items")
-                if items is None:
-                    items = payload.get("data", [])
-                if not items:
-                    break
-
-                for raw in items:
-                    listen = self._normalize_listen(raw, user_id)
-                    if listen is None:
-                        continue
-                    if since is not None and listen.played_at < since:
-                        # Results are ordered most-recent-first; older than the
-                        # watermark means we can stop paginating entirely.
-                        stop = True
-                        break
-                    events.append(listen)
-
-                if stop or len(items) < self.TIDAL_PAGE_SIZE:
-                    break
-                offset += self.TIDAL_PAGE_SIZE
-
-        logger.info("TidalAdapter: fetched %d listens for %s", len(events), user_id)
-        return events
+        logger.info(
+            "TidalAdapter.fetch_listens: TIDAL Developer API does not expose "
+            "listening history; returning [] (sync-target only)."
+        )
+        return []
