@@ -43,6 +43,17 @@ class CandidateFeatures:
         }
 
 
+def _ensure_utc(dt: datetime) -> datetime:
+    """Coerce a datetime to tz-aware UTC. SQLite strips tz info on round-trip
+    even when the column is `DateTime(timezone=True)`, so values read back
+    via SQLAlchemy are naive and must be re-tagged before any arithmetic
+    against `datetime.now(timezone.utc)`.
+    """
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def _time_of_day_label(hour: int) -> str:
     if 5 <= hour < 10:
         return "morning"
@@ -123,7 +134,9 @@ def compute_features(
         context_match = _context_match_for_track(db, user_id, tid, time_label)
 
         # Freshness: high when not heard recently (good for re-surfacing).
-        days_since_last = (now - agg.last_played_at).total_seconds() / 86400
+        last_played_at = _ensure_utc(agg.last_played_at)
+        first_played_at = _ensure_utc(agg.first_played_at)
+        days_since_last = (now - last_played_at).total_seconds() / 86400
         freshness = min(1.0, days_since_last / 14.0)
 
         # Novelty: inverse of normalized play count (rare = novel).
@@ -139,8 +152,8 @@ def compute_features(
                 title=track.title,
                 artist=track.artist,
                 play_count=agg.play_count,
-                first_played_at=agg.first_played_at,
-                last_played_at=agg.last_played_at,
+                first_played_at=first_played_at,
+                last_played_at=last_played_at,
                 taste_match=round(taste_match, 4),
                 context_match=round(context_match, 4),
                 freshness=round(freshness, 4),

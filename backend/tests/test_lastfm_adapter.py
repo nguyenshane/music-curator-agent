@@ -42,7 +42,7 @@ def test_paginates_and_normalizes(monkeypatch: pytest.MonkeyPatch) -> None:
     seen_pages: list[int] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        qs = parse_qs(request.url.query)
+        qs = parse_qs(request.url.query.decode("utf-8"))
         page = int(qs["page"][0])
         seen_pages.append(page)
         assert qs["user"] == ["shane_handle"], "must use LASTFM_USER from settings"

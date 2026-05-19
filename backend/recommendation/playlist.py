@@ -138,9 +138,14 @@ def latest_playlist(db: Session, user_id: str) -> dict[str, Any] | None:
     )
     if row is None:
         return None
+    # SQLite returns naive datetimes even on DateTime(timezone=True) columns;
+    # re-tag as UTC so the ISO string carries an offset for downstream parsers.
+    generated_at = row.generated_at
+    if generated_at.tzinfo is None:
+        generated_at = generated_at.replace(tzinfo=timezone.utc)
     return {
         "user_id": row.user_id,
-        "generated_at": row.generated_at.isoformat(),
+        "generated_at": generated_at.isoformat(),
         "context": row.context,
         "items": row.items,
         "notes": row.notes,
