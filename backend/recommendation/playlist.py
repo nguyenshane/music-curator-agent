@@ -138,6 +138,8 @@ def latest_playlist(db: Session, user_id: str) -> dict[str, Any] | None:
     )
     if row is None:
         return None
+    # UtcDateTime guarantees tz-aware reads; isoformat() therefore carries
+    # an offset suffix for downstream parsers.
     return {
         "user_id": row.user_id,
         "generated_at": row.generated_at.isoformat(),

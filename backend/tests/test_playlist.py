@@ -107,16 +107,29 @@ def test_persists_and_latest_returns_it():
 
 
 def test_today_route_falls_back_to_fresh_generation(monkeypatch):
-    """First /playlists/today call (no persisted row) regenerates inline."""
+    """First /playlists/today call (no persisted row) regenerates inline.
+
+    FastAPI runs sync endpoints in a threadpool, so the handler thread is
+    different from the test thread. Default sqlite `:memory:` engines give
+    each thread its own DB (SingletonThreadPool), so the seeded data would
+    be invisible. Force StaticPool to share one connection across threads.
+    """
     from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
 
     from backend.api.main import app
     from backend.api.routes import playlists as playlists_route
-    from backend.db.session import build_session_factory
 
-    # Point the route's session factory at a fresh in-memory DB seeded for u1.
-    factory = build_session_factory("sqlite+pysqlite:///:memory:")
-    Base.metadata.create_all(factory.kw["bind"])
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    factory = sessionmaker(bind=engine, future=True, expire_on_commit=False)
+    Base.metadata.create_all(engine)
     with factory() as db:
         _seed(db, user_id="u1")
     monkeypatch.setattr(playlists_route, "_session_factory", factory)
