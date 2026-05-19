@@ -38,11 +38,22 @@ class TidalAdapter(ListeningHistoryAdapter):
     provider_name = "tidal"
 
     def __init__(self) -> None:
-        self._settings = get_settings()
         self._access_token: str | None = None
         self._token_expires_at: datetime | None = None
-        # Per-user OAuth state and tokens.
+        # Per-user OAuth state and tokens. Lives on the instance, so the
+        # adapter must be process-singleton (see `get_tidal_adapter()`) for
+        # PKCE state to survive between authorize and exchange across
+        # separate API requests.
         self._user_tokens: dict[str, dict[str, Any]] = {}
+
+    @property
+    def _settings(self):  # noqa: ANN202 — Settings is a frozen dataclass
+        """Read settings live so a runtime env change (e.g. .env reload) is
+        picked up without rebuilding the adapter. Avoids the stale-client_id
+        bug where the adapter was instantiated before TIDAL_CLIENT_ID/SECRET
+        were exported.
+        """
+        return get_settings()
 
     # ── Client Credentials (public metadata) ──────────────────────────
 
@@ -229,3 +240,20 @@ class TidalAdapter(ListeningHistoryAdapter):
             "listening history; returning [] (sync-target only)."
         )
         return []
+
+
+# ── Process-singleton accessor ────────────────────────────────────────
+# Required so PKCE state (`_user_tokens[user_id]`) created during
+# `/auth/tidal/authorize` survives until `/auth/tidal/exchange` runs.
+# Without this, each request would build a new adapter and lose the
+# code_verifier, guaranteeing token-exchange failure inside the 1-minute
+# TIDAL authorization-code TTL.
+
+_singleton: TidalAdapter | None = None
+
+
+def get_tidal_adapter() -> TidalAdapter:
+    global _singleton
+    if _singleton is None:
+        _singleton = TidalAdapter()
+    return _singleton

@@ -12,7 +12,7 @@ from backend.adapters.base import ListeningHistoryAdapter
 from backend.adapters.lastfm import LastFMAdapter
 from backend.adapters.musicbrainz import MusicBrainzAdapter
 from backend.adapters.spotify import SpotifyAdapter
-from backend.adapters.tidal import TidalAdapter
+from backend.adapters.tidal import TidalAdapter, get_tidal_adapter
 from backend.adapters.ytmusic import YTMusicAdapter
 from backend.config import get_settings, ProviderName
 
@@ -40,7 +40,12 @@ class ProviderRegistry:
         """Auto-discover enabled providers from config."""
         for provider_name, adapter_class in _ALL_ADAPTERS.items():
             if self._settings.is_provider_enabled(provider_name):
-                adapter = adapter_class()
+                # Use the process singleton for TIDAL so OAuth PKCE state
+                # is shared between auth routes and ingestion.
+                if provider_name == "tidal":
+                    adapter = get_tidal_adapter()
+                else:
+                    adapter = adapter_class()
                 self._enabled[provider_name] = adapter
                 logger.info(f"Provider registry: {provider_name} enabled")
             else:
