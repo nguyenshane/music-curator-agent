@@ -5,6 +5,7 @@ Hermes-side instructions for working with the Shane Music Curator Agent.
 ## Contents
 
 - [TIDAL OAuth2 flow](#tidal-oauth2-flow) — connect a TIDAL account through the helper endpoints.
+- [Playlist suggestions](#playlist-suggestions) — fetch and explain today's recommended playlist.
 - Lane labeling and explainability — *to be added.*
 
 ---
@@ -129,6 +130,66 @@ Last.fm. Use TIDAL for outbound playlist writes.
 
 ---
 
-## Lane labeling and explainability
+## Playlist suggestions
+
+Endpoints for fetching today's recommended playlist. The same generator
+runs as the daily DAG `recommendation_scoring` stage, so a typical request
+hits a persisted row (fast). On a cold cache the route regenerates inline.
+
+| Method | Path                                    | Purpose                                        |
+|--------|-----------------------------------------|------------------------------------------------|
+| GET    | `/playlists/today?user_id=...&limit=20` | Most recently persisted playlist; auto-regenerate if none |
+| GET    | `/playlists/today?user_id=...&regenerate=true` | Force regeneration before returning     |
+| POST   | `/playlists/today` `{user_id, limit}`   | Force regeneration (idiomatic for writes)      |
+
+### Response shape
+
+```json
+{
+  "user_id": "shane",
+  "generated_at": "2026-05-19T14:00:00+00:00",
+  "context": "afternoon_weekday",
+  "items": [
+    {
+      "track_id": 42,
+      "title": "Focus Loop",
+      "artist": "Code Ensemble",
+      "score": 0.7321,
+      "trace": {
+        "taste_match": 0.85,
+        "context_match": 0.72,
+        "freshness": 0.43,
+        "novelty": 0.60,
+        "diversity": 1.0,
+        "rejection_penalty": 0.0
+      }
+    }
+  ],
+  "notes": null
+}
+```
+
+`trace` contains the exact feature inputs to the FR-7 scorer
+(`taste*0.35 + context*0.25 + freshness*0.15 + novelty*0.15 + diversity*0.10 - rejection_penalty`).
+Hermes should use these to render the explanation rather than re-deriving
+features client-side — the persisted row is the single source of truth.
+
+### When to regenerate vs. read
+
+- **Default to GET without `regenerate`.** The daily DAG already generates
+  one playlist per user per run; serving the latest is correct.
+- **Use `regenerate=true` (or POST)** only when the user explicitly asks
+  for a fresh take, or when a meaningful context change happened (e.g.
+  the user just gave a strong rejection signal and you want it reflected
+  immediately).
+
+### Empty result handling
+
+If the user has no ingested listening history yet, `items` is `[]` and
+`notes` is `"no listening history yet; ingest some listens first"`.
+Surface this to the user as "I don't have enough data yet — connect
+Spotify or Last.fm and let it ingest a few days." Do not silently retry.
+
+### Lane labeling and explainability
 
 *To be added in a follow-up.*

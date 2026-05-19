@@ -133,6 +133,29 @@ class JobRun(Base):
     )
 
 
+class DailyPlaylist(Base):
+    """The most recent recommendation playlist generated for a user.
+
+    `items` is a list of dicts: `{track_id, title, artist, score, trace}`
+    where `trace` is the feature breakdown (taste_match, context_match,
+    freshness, novelty, diversity, rejection_penalty) so the explanation
+    rendered by Hermes is always reproducible from the persisted row.
+    """
+
+    __tablename__ = "daily_playlists"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(80), index=True)
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
+    context: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    items: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class JobStageRun(Base):
     """Per-stage record within a JobRun.
 

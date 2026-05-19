@@ -99,6 +99,17 @@ def _stage_lane_update(db: Session, run: JobRun, user_id: str) -> dict[str, Any]
     return {"lanes": len(lanes)}
 
 
+def _stage_recommendation_scoring(db: Session, run: JobRun, user_id: str) -> dict[str, Any]:
+    """Generate and persist today's playlist from ingested listens."""
+    from backend.recommendation.playlist import generate_playlist
+
+    result = generate_playlist(db, user_id, limit=20)
+    return {
+        "items": len(result["items"]),
+        "context": result["context"],
+    }
+
+
 def _stage_noop(_name: str) -> StageFn:
     """Placeholder stage that succeeds with no work — for DAG entries that
     aren't implemented yet (metadata_enrichment, candidate_discovery, etc.).
@@ -115,7 +126,7 @@ STAGE_FNS: dict[str, StageFn] = {
     "session_build": _stage_session_build,
     "lane_update": _stage_lane_update,
     "candidate_discovery": _stage_noop("candidate_discovery"),
-    "recommendation_scoring": _stage_noop("recommendation_scoring"),
+    "recommendation_scoring": _stage_recommendation_scoring,
     "playlist_publish": _stage_noop("playlist_publish"),
     "feedback_scan": _stage_noop("feedback_scan"),
 }
