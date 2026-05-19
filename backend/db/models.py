@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    DateTime,
     Float,
     ForeignKey,
     Index,
@@ -14,6 +13,8 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+from backend.db.types import UtcDateTime
 
 
 class Base(DeclarativeBase):
@@ -47,10 +48,10 @@ class Listen(Base):
     user_id: Mapped[str] = mapped_column(String(80), index=True)
     provider: Mapped[str] = mapped_column(String(40), index=True)
     provider_track_id: Mapped[str] = mapped_column(String(120))
-    played_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    played_at: Mapped[datetime] = mapped_column(UtcDateTime, index=True)
     track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id"), index=True)
     ingested_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+        UtcDateTime, default=lambda: datetime.now(timezone.utc)
     )
 
     track: Mapped[Track] = relationship("Track")
@@ -65,7 +66,7 @@ class FeedbackEvent(Base):
     event_type: Mapped[str] = mapped_column(String(60), index=True)
     weight: Mapped[float] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UtcDateTime,
         default=lambda: datetime.now(timezone.utc),
         index=True,
     )
@@ -87,7 +88,7 @@ class Lane(Base):
     languages: Mapped[list[str]] = mapped_column(JSON, default=list)
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+        UtcDateTime, default=lambda: datetime.now(timezone.utc)
     )
 
 
@@ -107,22 +108,22 @@ class JobRun(Base):
     run_type: Mapped[str] = mapped_column(String(60), default="daily", index=True)
     status: Mapped[str] = mapped_column(String(20), index=True)
     started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UtcDateTime,
         default=lambda: datetime.now(timezone.utc),
         index=True,
     )
     finished_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        UtcDateTime, nullable=True
     )
     total_jobs: Mapped[int] = mapped_column(Integer)
     completed_jobs: Mapped[int] = mapped_column(Integer, default=0)
     failed_jobs: Mapped[int] = mapped_column(Integer, default=0)
     # Time window the run pulled data for (None = since last checkpoint).
     source_window_start: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        UtcDateTime, nullable=True
     )
     source_window_end: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        UtcDateTime, nullable=True
     )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -147,7 +148,7 @@ class DailyPlaylist(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(String(80), index=True)
     generated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UtcDateTime,
         default=lambda: datetime.now(timezone.utc),
         index=True,
     )
@@ -174,10 +175,10 @@ class JobStageRun(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending")
     provider: Mapped[str | None] = mapped_column(String(40), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        UtcDateTime, nullable=True
     )
     finished_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        UtcDateTime, nullable=True
     )
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     counts: Mapped[dict] = mapped_column(JSON, default=dict)

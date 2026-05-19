@@ -44,10 +44,10 @@ class CandidateFeatures:
 
 
 def _ensure_utc(dt: datetime) -> datetime:
-    """Coerce a datetime to tz-aware UTC. SQLite strips tz info on round-trip
-    even when the column is `DateTime(timezone=True)`, so values read back
-    via SQLAlchemy are naive and must be re-tagged before any arithmetic
-    against `datetime.now(timezone.utc)`.
+    """Defensive UTC coercion. The `UtcDateTime` column type guarantees
+    DB reads are already tz-aware UTC, so this is a no-op in the normal
+    case — kept to insulate callers that build CandidateFeatures from
+    non-DB sources (fixtures, tests, future stream adapters).
     """
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
