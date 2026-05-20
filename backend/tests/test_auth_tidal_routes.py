@@ -24,34 +24,39 @@ from backend.api.main import app
 def _tidal_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TIDAL_CLIENT_ID", "client_AAA")
     monkeypatch.setenv("TIDAL_CLIENT_SECRET", "secret_AAA")
+    monkeypatch.setenv("TIDAL_REDIRECT_URI", "https://nguyenshane.com/tidal/")
     # Reset the singleton so state from prior tests doesn't bleed in.
     tidal_mod._singleton = None
     yield
     tidal_mod._singleton = None
 
 
-def test_config_returns_live_client_id(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_config_returns_live_client_id_and_redirect_uri(monkeypatch: pytest.MonkeyPatch) -> None:
     client = TestClient(app)
     first = client.get("/auth/tidal/config").json()
     assert first["client_id"] == "client_AAA"
     assert first["client_id_configured"] is True
     assert first["client_secret_configured"] is True
+    assert first["redirect_uri"] == "https://nguyenshane.com/tidal/"
+    assert first["redirect_uri_configured"] is True
     assert first["scopes"] == list(tidal_mod.TIDAL_SCOPES)
+    assert "pinned" in first["policy"]
 
     # Simulate a runtime env change (the original bug source).
     monkeypatch.setenv("TIDAL_CLIENT_ID", "client_BBB")
+    monkeypatch.setenv("TIDAL_REDIRECT_URI", "https://nguyenshane.com/tidal/v2/")
     second = client.get("/auth/tidal/config").json()
     assert second["client_id"] == "client_BBB", "settings must be read live, not cached"
+    assert second["redirect_uri"] == "https://nguyenshane.com/tidal/v2/"
 
 
-def test_authorize_then_status_uses_same_singleton() -> None:
-    """PKCE state created at /authorize must be visible at /status (same singleton)."""
+def test_authorize_uses_env_redirect_uri_and_state_visible_to_status() -> None:
+    """PKCE state created at /authorize must be visible at /status (same singleton).
+    The redirect_uri must come from TIDAL_REDIRECT_URI; callers do not pass it.
+    """
     client = TestClient(app)
 
-    auth = client.post(
-        "/auth/tidal/authorize",
-        json={"user_id": "shane", "redirect_uri": "https://nguyenshane.com/tidal/"},
-    ).json()
+    auth = client.post("/auth/tidal/authorize", json={"user_id": "shane"}).json()
     parsed = urlparse(auth["authorize_url"])
     qs = parse_qs(parsed.query)
     assert qs["client_id"] == ["client_AAA"]
@@ -63,6 +68,26 @@ def test_authorize_then_status_uses_same_singleton() -> None:
     assert status["has_pkce_state"] is True
     assert status["has_tokens"] is False
     assert status["state"] == auth["state"]
+
+
+def test_authorize_rejects_caller_supplied_redirect_uri() -> None:
+    """Sending redirect_uri in the body must 422 — the field isn't allowed."""
+    client = TestClient(app)
+    resp = client.post(
+        "/auth/tidal/authorize",
+        json={"user_id": "shane", "redirect_uri": "https://listen.tidal.com/login/auth"},
+    )
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert any("redirect_uri" in str(err) for err in detail)
+
+
+def test_authorize_fails_loudly_when_env_redirect_uri_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TIDAL_REDIRECT_URI", raising=False)
+    client = TestClient(app)
+    resp = client.post("/auth/tidal/authorize", json={"user_id": "shane"})
+    assert resp.status_code == 400
+    assert "TIDAL_REDIRECT_URI" in resp.json()["detail"]
 
 
 def test_reset_clears_pkce_state() -> None:

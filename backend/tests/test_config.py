@@ -12,6 +12,7 @@ def test_provider_enablement_flags():
         lastfm_user=None,
         tidal_client_id=None,
         tidal_client_secret=None,
+        tidal_redirect_uri=None,
         ytmusic_oauth_token="",
         musicbrainz_user_agent="ShaneMusicCurator/0.1 (you@example.com)",
     )
