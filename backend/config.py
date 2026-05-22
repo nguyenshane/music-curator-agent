@@ -18,6 +18,7 @@ class Settings:
     lastfm_user: str | None
     tidal_client_id: str | None
     tidal_client_secret: str | None
+    tidal_redirect_uri: str | None
     ytmusic_oauth_token: str | None
     musicbrainz_user_agent: str | None
 
@@ -46,6 +47,7 @@ def get_settings() -> Settings:
         lastfm_user=os.getenv("LASTFM_USER"),
         tidal_client_id=os.getenv("TIDAL_CLIENT_ID"),
         tidal_client_secret=os.getenv("TIDAL_CLIENT_SECRET"),
+        tidal_redirect_uri=os.getenv("TIDAL_REDIRECT_URI"),
         ytmusic_oauth_token=os.getenv("YTMUSIC_OAUTH_TOKEN"),
         musicbrainz_user_agent=os.getenv("MUSICBRAINZ_USER_AGENT"),
     )

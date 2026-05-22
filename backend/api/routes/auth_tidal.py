@@ -43,7 +43,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.adapters.tidal import (
-    DEFAULT_REDIRECT_URI,
     TIDAL_SCOPES,
     TIDAL_AUTHORIZE_URL,
     TIDAL_TOKEN_URL,
@@ -57,28 +56,35 @@ router = APIRouter(prefix="/auth/tidal", tags=["auth-tidal"])
 
 
 class AuthorizeBody(BaseModel):
+    """The redirect_uri is intentionally not accepted here — it is pinned by
+    the `TIDAL_REDIRECT_URI` env var so /authorize and /exchange can never
+    disagree. Sending a `redirect_uri` field returns HTTP 422.
+    """
+
+    model_config = {"extra": "forbid"}
+
     user_id: str = Field(..., description="Internal user identifier the PKCE state will be keyed under.")
-    redirect_uri: str | None = Field(
-        None,
-        description="Override the configured default. Must match a redirect URI registered on developer.tidal.com.",
-    )
 
 
 class ExchangeBody(BaseModel):
+    """`redirect_uri` is intentionally not accepted; it is read from env."""
+
+    model_config = {"extra": "forbid"}
+
     user_id: str
     code: str = Field(..., description="Authorization code from TIDAL's callback (?code=...).")
     state: str = Field(..., description="State value from TIDAL's callback (?state=...). Must match what /authorize returned.")
-    redirect_uri: str | None = Field(
-        None,
-        description="Must match the redirect_uri used at /authorize. Defaults to whatever was stored there.",
-    )
 
 
 class RefreshBody(BaseModel):
+    model_config = {"extra": "forbid"}
+
     user_id: str
 
 
 class ResetBody(BaseModel):
+    model_config = {"extra": "forbid"}
+
     user_id: str
 
 
@@ -89,21 +95,25 @@ class ResetBody(BaseModel):
 def config() -> dict[str, Any]:
     """Live view of the TIDAL OAuth config the adapter would use right now.
 
-    Returns the actual `client_id` so Hermes can verify the authorize URL
-    it later receives uses the *same* one — that's how we caught the bug
-    where a stale snapshot of settings produced URLs with the wrong client.
+    Returns the actual `client_id` and the env-pinned `redirect_uri` so
+    Hermes can verify both before sending the user to TIDAL. The redirect
+    URI is server-enforced — there is no way to override it at the API
+    boundary (see AuthorizeBody / ExchangeBody).
     """
     adapter = get_tidal_adapter()
     settings = adapter._settings  # property → live read
     client_id = settings.tidal_client_id
+    redirect_uri = settings.tidal_redirect_uri
     return {
         "client_id": client_id,
         "client_id_configured": bool(client_id),
         "client_secret_configured": bool(settings.tidal_client_secret),
-        "default_redirect_uri": DEFAULT_REDIRECT_URI,
+        "redirect_uri": redirect_uri,
+        "redirect_uri_configured": bool(redirect_uri),
         "scopes": TIDAL_SCOPES,
         "authorize_endpoint": TIDAL_AUTHORIZE_URL,
         "token_endpoint": TIDAL_TOKEN_URL,
+        "policy": "redirect_uri is pinned by TIDAL_REDIRECT_URI; callers cannot override it.",
     }
 
 
@@ -118,7 +128,7 @@ def authorize(body: AuthorizeBody) -> dict[str, Any]:
     """
     adapter = get_tidal_adapter()
     try:
-        url = adapter.get_authorization_url(body.user_id, redirect_uri=body.redirect_uri)
+        url = adapter.get_authorization_url(body.user_id)
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     staged = adapter._user_tokens.get(body.user_id, {})
@@ -145,7 +155,6 @@ def exchange(body: ExchangeBody) -> dict[str, Any]:
             body.user_id,
             body.code,
             state=body.state,
-            redirect_uri=body.redirect_uri,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))

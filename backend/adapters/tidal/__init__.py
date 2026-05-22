@@ -29,7 +29,10 @@ TIDAL_SCOPES = [
 ]
 TIDAL_SCOPES_STR = " ".join(TIDAL_SCOPES)
 
-DEFAULT_REDIRECT_URI = "https://nguyenshane.com/tidal/"
+# The redirect URI is pinned by env (`TIDAL_REDIRECT_URI`) — callers cannot
+# override it. Allowing per-call overrides was the root cause of repeated
+# "wrong redirect_uri" failures because OAuth2 requires the value to be
+# byte-identical between /authorize and the token exchange.
 
 logger = logging.getLogger(__name__)
 
@@ -86,17 +89,39 @@ class TidalAdapter(ListeningHistoryAdapter):
 
     # ── OAuth2 Authorization Code Flow (with PKCE) ────────────────────
 
+    def _resolve_redirect_uri(self, caller_value: str | None) -> str:
+        """Return the env-pinned redirect URI, refusing any caller override.
+
+        OAuth2 requires byte-identical redirect_uri at /authorize and at the
+        token exchange. To make mismatches impossible, the value is sourced
+        only from `TIDAL_REDIRECT_URI`. If a caller passes a non-matching
+        value we raise rather than silently honor either side.
+        """
+        configured = self._settings.tidal_redirect_uri
+        if not configured:
+            raise RuntimeError(
+                "TIDAL_REDIRECT_URI is not configured. Set it to the redirect URI "
+                "registered on your developer.tidal.com app and restart the server."
+            )
+        if caller_value is not None and caller_value != configured:
+            raise RuntimeError(
+                f"Refusing redirect_uri override. Configured TIDAL_REDIRECT_URI is "
+                f"{configured!r}; caller passed {caller_value!r}. The value is pinned "
+                f"by env; do not pass redirect_uri at the API boundary."
+            )
+        return configured
+
     def get_authorization_url(self, user_id: str, *, redirect_uri: str | None = None) -> str:
         """Generate Tidal OAuth2 authorization URL with PKCE.
 
-        `redirect_uri` must exactly match a callback registered on the
-        developer.tidal.com app for this client_id.
+        The redirect URI is sourced from `TIDAL_REDIRECT_URI` and cannot be
+        overridden by the caller — see `_resolve_redirect_uri`.
         """
         client_id = self._settings.tidal_client_id
         if not client_id:
             raise RuntimeError("TIDAL_CLIENT_ID is required for OAuth2")
 
-        effective_redirect_uri = redirect_uri or DEFAULT_REDIRECT_URI
+        effective_redirect_uri = self._resolve_redirect_uri(redirect_uri)
 
         code_verifier = secrets.token_urlsafe(64)
         code_challenge = self._pkce_challenge(code_verifier)
@@ -144,16 +169,16 @@ class TidalAdapter(ListeningHistoryAdapter):
 
         expected_state = self._user_tokens.get(user_id, {}).get("state")
         code_verifier = self._user_tokens.get(user_id, {}).get("code_verifier")
-        stored_redirect_uri = self._user_tokens.get(user_id, {}).get("redirect_uri")
 
         if not code_verifier:
             raise RuntimeError("No PKCE state found. Call get_authorization_url first.")
         if expected_state and state and state != expected_state:
             raise RuntimeError("OAuth state mismatch for Tidal callback")
 
-        effective_redirect_uri = redirect_uri or stored_redirect_uri
-        if not effective_redirect_uri:
-            raise RuntimeError("redirect_uri is required to exchange Tidal authorization code")
+        # Always exchange against the env-pinned URI. The stored value from
+        # /authorize must equal this; if it doesn't, _resolve_redirect_uri
+        # already raised at authorize-time so we wouldn't be here.
+        effective_redirect_uri = self._resolve_redirect_uri(redirect_uri)
 
         token_data = {
             "grant_type": "authorization_code",
