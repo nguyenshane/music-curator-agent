@@ -58,7 +58,7 @@ def _seed(db: Session, user_id: str = "u1") -> datetime:
 
 def test_empty_history_returns_no_items_with_note():
     with _fresh_db() as db:
-        result = generate_playlist(db, "ghost", limit=10)
+        result = generate_playlist(db, "ghost", limit=10, enable_discovery=False, enable_audio_features=False)
     assert result["items"] == []
     assert "no listening history" in result["notes"]
 
@@ -66,7 +66,10 @@ def test_empty_history_returns_no_items_with_note():
 def test_generates_ranked_items_with_trace():
     with _fresh_db() as db:
         now = _seed(db)
-        result = generate_playlist(db, "u1", limit=10, now=now)
+        result = generate_playlist(
+            db, "u1", limit=10, now=now,
+            enable_discovery=False, enable_audio_features=False,
+        )
 
     assert result["context"] == current_context(now)
     assert len(result["items"]) == 3
@@ -75,8 +78,9 @@ def test_generates_ranked_items_with_trace():
     for item in result["items"]:
         assert set(item["trace"].keys()) == {
             "taste_match", "context_match", "freshness",
-            "novelty", "diversity", "rejection_penalty",
+            "novelty", "diversity", "rejection_penalty", "audio_similarity",
         }
+        assert item["source"] in {"history", "discovery"}
 
     # Sorted descending by score.
     scores = [item["score"] for item in result["items"]]
@@ -98,7 +102,10 @@ def test_generates_ranked_items_with_trace():
 def test_persists_and_latest_returns_it():
     with _fresh_db() as db:
         now = _seed(db)
-        generated = generate_playlist(db, "u1", limit=5, now=now)
+        generated = generate_playlist(
+            db, "u1", limit=5, now=now,
+            enable_discovery=False, enable_audio_features=False,
+        )
 
         latest = latest_playlist(db, "u1")
         assert latest is not None

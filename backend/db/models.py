@@ -30,6 +30,11 @@ class Track(Base):
     artist: Mapped[str] = mapped_column(String(300))
     isrc: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Spotify audio-features cache. Keys: acousticness, danceability, energy,
+    # instrumentalness, liveness, speechiness, valence, tempo, loudness.
+    # Special sentinel {"_unavailable": true} marks tracks we tried but
+    # couldn't fetch (e.g. Spotify deprecated /audio-features for the app).
+    audio_features: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class Listen(Base):

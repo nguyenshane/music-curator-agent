@@ -6,6 +6,8 @@ Hermes-side instructions for working with the Shane Music Curator Agent.
 
 - [TIDAL OAuth2 flow](#tidal-oauth2-flow) — connect a TIDAL account through the helper endpoints.
 - [Playlist suggestions](#playlist-suggestions) — fetch and explain today's recommended playlist.
+- [Feedback signals](#feedback-signals) — tell the system what the user liked or hated.
+- [Provider capabilities](#provider-capabilities) — diagnose what a registered Spotify app can actually do.
 - Lane labeling and explainability — *to be added.*
 
 ---
@@ -185,6 +187,7 @@ hits a persisted row (fast). On a cold cache the route regenerates inline.
       "track_id": 42,
       "title": "Focus Loop",
       "artist": "Code Ensemble",
+      "source": "history",
       "score": 0.7321,
       "trace": {
         "taste_match": 0.85,
@@ -192,7 +195,8 @@ hits a persisted row (fast). On a cold cache the route regenerates inline.
         "freshness": 0.43,
         "novelty": 0.60,
         "diversity": 1.0,
-        "rejection_penalty": 0.0
+        "rejection_penalty": 0.0,
+        "audio_similarity": 0.78
       }
     }
   ],
@@ -200,8 +204,14 @@ hits a persisted row (fast). On a cold cache the route regenerates inline.
 }
 ```
 
+`source` is either `"history"` (a track the user has heard before) or
+`"discovery"` (a new track pulled from Last.fm `track.getSimilar`
+seeded from the user's top artists). Mention this in explanations.
+
 `trace` contains the exact feature inputs to the FR-7 scorer
-(`taste*0.35 + context*0.25 + freshness*0.15 + novelty*0.15 + diversity*0.10 - rejection_penalty`).
+(`taste*0.30 + context*0.20 + freshness*0.10 + novelty*0.10 + diversity*0.25 + audio_similarity*0.05 - rejection_penalty`).
+Tracks lacking Spotify audio-features cache hold `audio_similarity: 0.5`
+(neutral) and aren't penalised relative to ones that have it.
 Hermes should use these to render the explanation rather than re-deriving
 features client-side — the persisted row is the single source of truth.
 
@@ -224,3 +234,107 @@ Spotify or Last.fm and let it ingest a few days." Do not silently retry.
 ### Lane labeling and explainability
 
 *To be added in a follow-up.*
+
+---
+
+## Feedback signals
+
+Recording feedback is how the system *learns*. Without it the
+recommendation set drifts but never improves. Hermes should capture at
+least 3–5 reactions per playlist to keep the model useful.
+
+| Method | Path             | Body / Query                                          |
+|--------|------------------|--------------------------------------------------------|
+| POST   | `/feedback`      | `{user_id, track_id, signal}`                          |
+| GET    | `/feedback/recent?user_id=...&limit=50` | List recent feedback events       |
+
+`signal` values and their weights:
+
+| Signal | Weight | Effect |
+|--------|--------|--------|
+| `love` | +2.0  | Strong positive boost. Future picks will lean into this artist/track. |
+| `like` | +1.0  | Mild positive. |
+| `skip` | -1.0  | Mild penalty. The track is dropped from recommendation candidates with exponential time decay (τ = 14 days). |
+| `hate` | -2.5  | Strong penalty. Effectively removes the track for ~30+ days. |
+
+Request body is `extra=forbid` — only `user_id`, `track_id`, `signal`.
+Sending anything else returns **HTTP 422**. `track_id` is the **internal**
+`Track.id`, not a provider id; pull it from a playlist item's `track_id`.
+
+### When to call
+
+- After surfacing a playlist, prompt the user for reactions and post
+  each one. Don't batch — call once per signal. The endpoint is cheap.
+- On a `hate`, the system will not show that track for weeks. Use it
+  sparingly; prefer `skip` for "not now."
+- `love` is the single strongest taste signal — far more useful than
+  raw play count. Encourage the user to use it.
+
+### Response shape
+
+```json
+{
+  "ok": true,
+  "id": 42,
+  "user_id": "shane",
+  "track_id": 17,
+  "signal": "hate",
+  "weight": -2.5
+}
+```
+
+Errors:
+- **404** if `track_id` doesn't exist.
+- **422** if extra fields are sent or `signal` isn't one of the four.
+
+---
+
+## Provider capabilities
+
+Operator diagnostics — confirm what a Spotify app is allowed to do
+before depending on it.
+
+| Method | Path                              | Purpose                                  |
+|--------|-----------------------------------|------------------------------------------|
+| GET    | `/providers/spotify/capabilities` | Reports whether `/audio-features` works  |
+
+### Why this exists
+
+Spotify deprecated `/audio-features` for apps registered after November
+2024. The recommendation pipeline uses audio similarity as a *soft*
+signal (5% weight) when available, but the rest of the score works fine
+without it. The probe lets you tell at a glance whether your Spotify
+app has access, so you don't chase phantom bugs in scoring quality.
+
+### Response shape
+
+```json
+{
+  "audio_features": {
+    "available": true,
+    "status_code": 200,
+    "reason": "ok"
+  }
+}
+```
+
+When unavailable:
+
+```json
+{
+  "audio_features": {
+    "available": false,
+    "status_code": 403,
+    "reason": "Spotify denies /audio-features to this app. Likely registered after Nov 2024..."
+  }
+}
+```
+
+### Action
+
+- If `available: true`, no action needed. Audio similarity flows into
+  the score automatically.
+- If `available: false`, surface this to the operator. They can either
+  register an older Spotify app and rotate `SPOTIFY_CLIENT_ID` /
+  `SPOTIFY_CLIENT_SECRET`, or accept that recommendations will rely on
+  history + feedback signals only (still strong, just one fewer lever).
